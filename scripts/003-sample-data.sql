@@ -1,0 +1,71 @@
+-- Sample Pokemon cards for testing
+-- Run this after creating your owner account
+
+INSERT INTO pokemon_cards (
+  category,
+  sub_category,
+  title,
+  description,
+  quantity,
+  type,
+  price,
+  shipping_profile,
+  offerable,
+  hazmat,
+  condition,
+  cost_per_item,
+  sku,
+  image_url_1,
+  user_id
+) VALUES 
+(
+  'Trading Card Games',
+  'Pokémon Cards',
+  'Charizard Base Set 4/102',
+  'Classic Charizard from the original Base Set. Holographic card in excellent condition.',
+  1,
+  'Buy it Now',
+  150.00,
+  '1 oz',
+  true,
+  false,
+  'Near Mint',
+  75.00,
+  'CHAR-BASE-4-102',
+  '/placeholder.svg?height=300&width=200',
+  (SELECT id FROM auth.users WHERE email = 'owner@pokemoncards.com' LIMIT 1)
+),
+(
+  'Trading Card Games',
+  'Pokémon Cards',
+  'Pikachu Base Set 58/102',
+  'Original Pikachu card from Base Set. Yellow mouse Pokemon in great condition.',
+  2,
+  'Buy it Now',
+  25.00,
+  '1 oz',
+  true,
+  false,
+  'Excellent',
+  12.50,
+  'PIKA-BASE-58-102',
+  '/placeholder.svg?height=300&width=200',
+  (SELECT id FROM auth.users WHERE email = 'owner@pokemoncards.com' LIMIT 1)
+),
+(
+  'Trading Card Games',
+  'Pokémon Cards',
+  'Blastoise Base Set 2/102',
+  'Water-type starter evolution. Holographic card with great artwork.',
+  1,
+  'Buy it Now',
+  80.00,
+  '1 oz',
+  true,
+  false,
+  'Very Good',
+  40.00,
+  'BLAST-BASE-2-102',
+  '/placeholder.svg?height=300&width=200',
+  (SELECT id FROM auth.users WHERE email = 'owner@pokemoncards.com' LIMIT 1)
+);
