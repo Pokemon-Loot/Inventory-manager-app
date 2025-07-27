@@ -12,6 +12,7 @@ interface AuthContextType {
   user: User | null
   loading: boolean
   signIn: (email: string, password: string) => Promise<{ error?: string }>
+  signUp: (email: string, password: string) => Promise<{ error?: string }>
   signOut: () => Promise<void>
 }
 
@@ -22,7 +23,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
-    // Get initial session
+    // Get initial session - ignore email confirmation status
     const getInitialSession = async () => {
       try {
         const {
@@ -38,7 +39,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
     getInitialSession()
 
-    // Listen for auth changes
+    // Listen for auth changes - accept any authenticated user
     const {
       data: { subscription },
     } = supabase.auth.onAuthStateChange(async (event, session) => {
@@ -66,6 +67,33 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
   }
 
+  const signUp = async (email: string, password: string) => {
+    try {
+      // Sign up without email confirmation
+      const { data, error } = await supabase.auth.signUp({
+        email,
+        password,
+        options: {
+          emailRedirectTo: undefined, // No email confirmation
+        },
+      })
+
+      if (error) {
+        return { error: error.message }
+      }
+
+      // Immediately sign in after signup
+      if (data.user) {
+        const signInResult = await signIn(email, password)
+        return signInResult
+      }
+
+      return {}
+    } catch (error: any) {
+      return { error: error.message || "An unexpected error occurred" }
+    }
+  }
+
   const signOut = async () => {
     try {
       await supabase.auth.signOut()
@@ -74,7 +102,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
   }
 
-  return <AuthContext.Provider value={{ user, loading, signIn, signOut }}>{children}</AuthContext.Provider>
+  return <AuthContext.Provider value={{ user, loading, signIn, signUp, signOut }}>{children}</AuthContext.Provider>
 }
 
 export function useAuth() {

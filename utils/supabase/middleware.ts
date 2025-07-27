@@ -5,7 +5,6 @@ const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL
 const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
 
 export const updateSession = async (request: NextRequest) => {
-  // Create an unmodified response
   let supabaseResponse = NextResponse.next({
     request: {
       headers: request.headers,
@@ -27,12 +26,12 @@ export const updateSession = async (request: NextRequest) => {
     },
   })
 
-  // Get user session (no email verification required)
+  // Get user session WITHOUT checking email confirmation
   const {
     data: { user },
   } = await supabase.auth.getUser()
 
-  // Protect routes - redirect unauthenticated users to login
+  // Allow access regardless of email confirmation status
   if (
     !user &&
     !request.nextUrl.pathname.startsWith("/") &&

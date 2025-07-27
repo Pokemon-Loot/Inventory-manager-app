@@ -14,11 +14,11 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog"
-import { Textarea } from "@/components/ui/textarea"
+import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Alert, AlertDescription } from "@/components/ui/alert"
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import { Loader2, Upload, FileSpreadsheet, Copy } from "lucide-react"
+import { Progress } from "@/components/ui/progress"
+import { Loader2, Upload, FileText, CheckCircle, AlertCircle } from "lucide-react"
 
 const supabase = createClient()
 
@@ -32,78 +32,151 @@ export function BulkUploadDialog({ open, onOpenChange, onSuccess }: BulkUploadDi
   const { user } = useAuth()
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState("")
-  const [csvData, setCsvData] = useState("")
-  const [pasteData, setPasteData] = useState("")
+  const [success, setSuccess] = useState("")
+  const [progress, setProgress] = useState(0)
+  const [uploadStats, setUploadStats] = useState({ total: 0, successful: 0, failed: 0 })
 
-  const parseCSVData = (data: string) => {
-    const lines = data.trim().split("\n")
-    if (lines.length < 2) {
-      throw new Error("CSV must have at least a header row and one data row")
-    }
+  const parseCSV = (csvText: string) => {
+    const lines = csvText.split("\n").filter((line) => line.trim())
+    if (lines.length < 2) throw new Error("CSV must have at least a header row and one data row")
 
     const headers = lines[0].split(",").map((h) => h.trim().replace(/"/g, ""))
+    const rows = lines.slice(1)
 
-    const cards = []
-    for (let i = 1; i < lines.length; i++) {
-      const values = lines[i].split(",").map((v) => v.trim().replace(/"/g, ""))
+    return rows.map((row) => {
+      const values = row.split(",").map((v) => v.trim().replace(/"/g, ""))
+      const card: any = { user_id: user?.id }
 
-      if (values.length >= 3 && values[2]) {
-        // At least category, sub_category, title
-        const card = {
-          category: values[0] || "Trading Card Games",
-          sub_category: values[1] || "Pokémon Cards",
-          title: values[2] || "",
-          description: values[3] || "",
-          quantity: Number.parseInt(values[4]) || 1,
-          type: values[5] || "Buy it Now",
-          price: Number.parseFloat(values[6]) || 0,
-          shipping_profile: values[7] || "0-1 oz",
-          condition: values[8] || "Near Mint",
-          selling_price: Number.parseFloat(values[9]) || 0,
-          sku: values[10] || "",
-          image_1: values[11] || "", // Optional - can be empty
-          image_2: values[12] || "", // Optional - can be empty
-          user_id: user?.id,
+      headers.forEach((header, index) => {
+        const value = values[index] || ""
+
+        switch (header.toLowerCase()) {
+          case "category":
+            card.category = value || "Trading Card Games"
+            break
+          case "sub_category":
+          case "subcategory":
+            card.sub_category = value || "Pokémon Cards"
+            break
+          case "title":
+            card.title = value
+            break
+          case "description":
+            card.description = value || ""
+            break
+          case "quantity":
+            card.quantity = Number.parseInt(value) || 1
+            break
+          case "type":
+            card.type = value || "Buy it Now"
+            break
+          case "price":
+          case "listing_price":
+            card.price = Number.parseFloat(value) || 0
+            break
+          case "selling_price":
+            card.selling_price = Number.parseFloat(value) || 0
+            break
+          case "condition":
+            card.condition = value || "Near Mint"
+            break
+          case "shipping_profile":
+            card.shipping_profile = value || "0-1 oz"
+            break
+          case "sku":
+            card.sku = value.trim() || null
+            break
+          case "image_1":
+          case "image1":
+            card.image_1 = value || ""
+            break
+          case "image_2":
+          case "image2":
+            card.image_2 = value || ""
+            break
         }
-        cards.push(card)
+      })
+
+      if (!card.title) {
+        throw new Error(`Row missing required title: ${row}`)
       }
-    }
-    return cards
+
+      return card
+    })
   }
 
-  const handleFileUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
+  const uploadInBatches = async (cards: any[], batchSize = 50) => {
+    let successful = 0
+    let failed = 0
+    const total = cards.length
+
+    for (let i = 0; i < cards.length; i += batchSize) {
+      const batch = cards.slice(i, i + batchSize)
+
+      try {
+        const { error } = await supabase.from("pokemon_cards").insert(batch)
+
+        if (error) {
+          console.error("Batch error:", error)
+          failed += batch.length
+        } else {
+          successful += batch.length
+        }
+      } catch (error) {
+        console.error("Batch upload error:", error)
+        failed += batch.length
+      }
+
+      const currentProgress = Math.round(((i + batchSize) / total) * 100)
+      setProgress(Math.min(currentProgress, 100))
+      setUploadStats({ total, successful, failed })
+    }
+
+    return { total, successful, failed }
+  }
+
+  const handleFileUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0]
-    if (file) {
-      const reader = new FileReader()
-      reader.onload = (e) => {
-        const content = e.target?.result as string
-        setCsvData(content)
-      }
-      reader.readAsText(file)
-    }
-  }
+    if (!file || !user) return
 
-  const handleBulkUpload = async (data: string) => {
-    if (!user || !data.trim()) return
+    if (!file.name.toLowerCase().endsWith(".csv")) {
+      setError("Please select a CSV file")
+      return
+    }
 
     setLoading(true)
     setError("")
+    setSuccess("")
+    setProgress(0)
+    setUploadStats({ total: 0, successful: 0, failed: 0 })
 
     try {
-      const cards = parseCSVData(data)
+      const csvText = await file.text()
+      const cards = parseCSV(csvText)
 
       if (cards.length === 0) {
-        throw new Error("No valid cards found in the data")
+        throw new Error("No valid cards found in CSV")
       }
 
-      const { error } = await supabase.from("pokemon_cards").insert(cards)
+      const stats = await uploadInBatches(cards)
 
-      if (error) throw error
+      if (stats.successful > 0) {
+        setSuccess(
+          `Successfully uploaded ${stats.successful} cards${stats.failed > 0 ? `, ${stats.failed} failed` : ""}`,
+        )
+        onSuccess()
 
-      onSuccess()
-      onOpenChange(false)
-      setCsvData("")
-      setPasteData("")
+        if (stats.failed === 0) {
+          setTimeout(() => {
+            onOpenChange(false)
+            setSuccess("")
+            setProgress(0)
+            setUploadStats({ total: 0, successful: 0, failed: 0 })
+          }, 2000)
+        }
+      } else {
+        setError(`Failed to upload any cards. ${stats.failed} cards had errors.`)
+      }
     } catch (error: any) {
       setError(error.message)
     } finally {
@@ -111,111 +184,103 @@ export function BulkUploadDialog({ open, onOpenChange, onSuccess }: BulkUploadDi
     }
   }
 
-  const sampleCSV = `Category,Sub Category,Title,Description,Quantity,Type,Price,Shipping Profile,Condition,Selling Price,SKU,Image 1,Image 2
-Trading Card Games,Pokémon Cards,Slaking Ex 227/191 Full Art,D,1,Buy it Now,2.00,0-1 oz,Near Mint,9.59,,,
-Trading Card Games,Pokémon Cards,Base Set Pikachu 58/102,Original Pikachu from Base Set,2,Buy it Now,15.00,0-1 oz,Excellent,25.00,,https://example.com/pikachu.jpg,
-Trading Card Games,Pokémon Cards,Charizard Base Set 4/102,Holographic Charizard card,1,Auction,150.00,1-2 oz,Near Mint,200.00,CHAR-001,https://example.com/charizard1.jpg,https://example.com/charizard2.jpg`
+  const downloadTemplate = () => {
+    const template = `category,sub_category,title,description,quantity,type,price,selling_price,condition,shipping_profile,sku,image_1,image_2
+Trading Card Games,Pokémon Cards,Pikachu VMAX,Rare holographic card,1,Buy it Now,25.99,0,Near Mint,0-1 oz,PIKA001,https://example.com/image1.jpg,
+Trading Card Games,Pokémon Cards,Charizard EX,Ultra rare card,1,Auction,45.00,0,Mint,0-1 oz,CHAR002,,https://example.com/image2.jpg`
+
+    const blob = new Blob([template], { type: "text/csv" })
+    const url = window.URL.createObjectURL(blob)
+    const a = document.createElement("a")
+    a.href = url
+    a.download = "pokemon-cards-template.csv"
+    document.body.appendChild(a)
+    a.click()
+    document.body.removeChild(a)
+    window.URL.revokeObjectURL(url)
+  }
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
+      <DialogContent className="max-w-2xl">
         <DialogHeader>
           <DialogTitle>Bulk Upload Cards</DialogTitle>
-          <DialogDescription>Upload multiple cards using CSV file, Google Sheets data, or copy/paste</DialogDescription>
+          <DialogDescription>
+            Upload multiple cards from a CSV file. Download the template to see the required format.
+          </DialogDescription>
         </DialogHeader>
 
-        <Tabs defaultValue="csv" className="w-full">
-          <TabsList className="grid w-full grid-cols-3">
-            <TabsTrigger value="csv">
-              <FileSpreadsheet className="mr-2 h-4 w-4" />
-              CSV File
-            </TabsTrigger>
-            <TabsTrigger value="paste">
-              <Copy className="mr-2 h-4 w-4" />
-              Copy & Paste
-            </TabsTrigger>
-            <TabsTrigger value="sample">Sample Format</TabsTrigger>
-          </TabsList>
-
-          <TabsContent value="csv" className="space-y-4">
-            <div className="space-y-2">
-              <Label htmlFor="csv-file">Upload CSV File</Label>
-              <input
-                id="csv-file"
-                type="file"
-                accept=".csv"
-                onChange={handleFileUpload}
-                className="block w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100"
-              />
-            </div>
-            {csvData && (
-              <div className="space-y-2">
-                <Label>Preview</Label>
-                <Textarea
-                  value={csvData}
-                  onChange={(e) => setCsvData(e.target.value)}
-                  rows={10}
-                  className="font-mono text-sm"
-                />
-              </div>
-            )}
-          </TabsContent>
-
-          <TabsContent value="paste" className="space-y-4">
-            <Alert>
-              <AlertDescription>
-                <strong>From Google Sheets:</strong> Select your data → Copy (Ctrl+C) → Paste below
-                <br />
-                <strong>From Excel:</strong> Select your data → Copy → Paste below
-                <br />
-                <strong>Images are optional:</strong> Leave image columns empty if no images
-              </AlertDescription>
+        <div className="space-y-4">
+          {error && (
+            <Alert variant="destructive">
+              <AlertCircle className="h-4 w-4" />
+              <AlertDescription>{error}</AlertDescription>
             </Alert>
-            <div className="space-y-2">
-              <Label htmlFor="paste-data">Paste CSV Data</Label>
-              <Textarea
-                id="paste-data"
-                value={pasteData}
-                onChange={(e) => setPasteData(e.target.value)}
-                placeholder="Paste your CSV data here (including headers)..."
-                rows={15}
-                className="font-mono text-sm"
-              />
-            </div>
-          </TabsContent>
+          )}
 
-          <TabsContent value="sample" className="space-y-4">
-            <div className="space-y-2">
-              <Label>Sample CSV Format</Label>
-              <Textarea value={sampleCSV} readOnly rows={10} className="font-mono text-sm bg-gray-50" />
-              <Alert>
-                <AlertDescription>
-                  <strong>Column Order (must match exactly):</strong>
-                  <br />
-                  Category, Sub Category, Title, Description, Quantity, Type, Price, Shipping Profile, Condition,
-                  Selling Price, SKU, Image 1, Image 2
-                  <br />
-                  <strong>Note:</strong> Image columns are optional - leave empty if no images
-                </AlertDescription>
-              </Alert>
-            </div>
-          </TabsContent>
-        </Tabs>
+          {success && (
+            <Alert>
+              <CheckCircle className="h-4 w-4" />
+              <AlertDescription>{success}</AlertDescription>
+            </Alert>
+          )}
 
-        {error && (
-          <Alert variant="destructive">
-            <AlertDescription>{error}</AlertDescription>
-          </Alert>
-        )}
+          <div className="space-y-2">
+            <Label htmlFor="csv-file">Select CSV File</Label>
+            <Input
+              id="csv-file"
+              type="file"
+              accept=".csv"
+              onChange={handleFileUpload}
+              disabled={loading}
+              className="cursor-pointer"
+            />
+          </div>
+
+          {loading && (
+            <div className="space-y-2">
+              <div className="flex items-center gap-2">
+                <Loader2 className="h-4 w-4 animate-spin" />
+                <span className="text-sm">Uploading cards...</span>
+              </div>
+              <Progress value={progress} className="w-full" />
+              <div className="text-xs text-gray-500">
+                Progress: {uploadStats.successful + uploadStats.failed} / {uploadStats.total} cards processed
+                {uploadStats.successful > 0 && ` (${uploadStats.successful} successful)`}
+                {uploadStats.failed > 0 && ` (${uploadStats.failed} failed)`}
+              </div>
+            </div>
+          )}
+
+          <div className="border rounded-lg p-4 bg-gray-50">
+            <h4 className="font-medium mb-2 flex items-center gap-2">
+              <FileText className="h-4 w-4" />
+              CSV Format Requirements
+            </h4>
+            <ul className="text-sm text-gray-600 space-y-1">
+              <li>
+                • Required columns: <code>title</code>
+              </li>
+              <li>
+                • Optional columns:{" "}
+                <code>
+                  category, sub_category, description, quantity, type, price, selling_price, condition,
+                  shipping_profile, sku, image_1, image_2
+                </code>
+              </li>
+              <li>• Duplicate SKUs are allowed (will be handled automatically)</li>
+              <li>• Images can be URLs or left empty</li>
+            </ul>
+          </div>
+        </div>
 
         <DialogFooter>
-          <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
-            Cancel
-          </Button>
-          <Button onClick={() => handleBulkUpload(csvData || pasteData)} disabled={loading || (!csvData && !pasteData)}>
-            {loading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+          <Button variant="outline" onClick={downloadTemplate}>
             <Upload className="mr-2 h-4 w-4" />
-            Upload Cards
+            Download Template
+          </Button>
+          <Button variant="outline" onClick={() => onOpenChange(false)}>
+            Close
           </Button>
         </DialogFooter>
       </DialogContent>

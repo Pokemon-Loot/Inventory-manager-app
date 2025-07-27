@@ -123,12 +123,14 @@ export function AddCardDialog({ open, onOpenChange, onSuccess }: AddCardDialogPr
     setError("")
 
     try {
-      const { error } = await supabase.from("pokemon_cards").insert([
-        {
-          ...formData,
-          user_id: user.id,
-        },
-      ])
+      // Handle SKU - make it unique if provided, or set to null if empty
+      const cardData = {
+        ...formData,
+        user_id: user.id,
+        sku: formData.sku.trim() || null, // Simple: use the SKU as-is or null if empty
+      }
+
+      const { error } = await supabase.from("pokemon_cards").insert([cardData])
 
       if (error) throw error
 
@@ -401,13 +403,14 @@ export function AddCardDialog({ open, onOpenChange, onSuccess }: AddCardDialogPr
               </Select>
             </div>
             <div className="space-y-2">
-              <Label htmlFor="sku">SKU</Label>
+              <Label htmlFor="sku">SKU (Optional)</Label>
               <Input
                 id="sku"
                 value={formData.sku}
                 onChange={(e) => setFormData({ ...formData, sku: e.target.value })}
-                placeholder="Optional SKU"
+                placeholder="Will be made unique automatically"
               />
+              <p className="text-xs text-gray-500">Duplicate SKUs are allowed</p>
             </div>
           </div>
 

@@ -3,7 +3,7 @@
 import type React from "react"
 
 import { useState } from "react"
-import { createClient } from "@/utils/supabase/client"
+import { useAuth } from "@/contexts/auth-context"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
@@ -11,69 +11,51 @@ import { Label } from "@/components/ui/label"
 import { Alert, AlertDescription } from "@/components/ui/alert"
 import { CheckCircle, Loader2, ArrowRight, User } from "lucide-react"
 
-const supabase = createClient()
-
 export default function SignUpPage() {
   const [email, setEmail] = useState("")
   const [password, setPassword] = useState("")
   const [loading, setLoading] = useState(false)
   const [success, setSuccess] = useState(false)
   const [error, setError] = useState("")
+  const { signUp, signIn } = useAuth()
 
   const handleSignUp = async (e: React.FormEvent) => {
     e.preventDefault()
     setLoading(true)
     setError("")
 
-    try {
-      // Sign up without email confirmation
-      const { data, error } = await supabase.auth.signUp({
-        email,
-        password,
-        options: {
-          emailRedirectTo: undefined, // Disable email confirmation
-        },
-      })
+    const result = await signUp(email, password)
 
-      if (error) {
-        if (error.message.includes("already registered")) {
-          setError("Account already exists! Try logging in instead.")
-        } else {
-          setError(error.message)
-        }
-      } else if (data.user) {
-        // Account created successfully - no email verification needed
-        setSuccess(true)
+    if (result.error) {
+      if (result.error.includes("already registered")) {
+        setError("Account already exists! Try logging in instead.")
+      } else {
+        setError(result.error)
       }
-    } catch (err: any) {
-      setError(err.message)
-    } finally {
-      setLoading(false)
+    } else {
+      setSuccess(true)
+      // Redirect to dashboard after successful signup
+      setTimeout(() => {
+        window.location.href = "/dashboard"
+      }, 2000)
     }
+
+    setLoading(false)
   }
 
   const handleQuickSetup = async () => {
     setLoading(true)
     setError("")
 
-    try {
-      // Try to sign in with the pre-created account
-      const { data, error } = await supabase.auth.signInWithPassword({
-        email: "owner@pokemoncards.com",
-        password: "pokemon123",
-      })
+    const result = await signIn("owner@pokemonloot.com", "pokemon123")
 
-      if (error) {
-        setError("Quick setup account not found. Please run the SQL setup script first.")
-      } else {
-        // Success! Redirect to dashboard
-        window.location.href = "/dashboard"
-      }
-    } catch (err: any) {
-      setError(err.message)
-    } finally {
-      setLoading(false)
+    if (result.error) {
+      setError("Quick setup account not found. Please run the SQL setup script first.")
+    } else {
+      window.location.href = "/dashboard"
     }
+
+    setLoading(false)
   }
 
   if (success) {
@@ -83,19 +65,18 @@ export default function SignUpPage() {
           <CardHeader className="text-center">
             <CheckCircle className="h-12 w-12 text-green-600 mx-auto mb-4" />
             <CardTitle className="text-2xl font-bold text-green-800">Account Created!</CardTitle>
-            <CardDescription>Your Pokemon inventory account is ready to use</CardDescription>
+            <CardDescription>Redirecting to your dashboard...</CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
             <Alert className="bg-green-50 border-green-200">
               <AlertDescription className="text-green-800">
-                <strong>Success!</strong> Account created and ready to use immediately.
+                <strong>Success!</strong> Account created and logged in automatically. No email confirmation needed!
               </AlertDescription>
             </Alert>
 
-            <Button className="w-full" onClick={() => (window.location.href = "/")}>
-              <ArrowRight className="mr-2 h-4 w-4" />
-              Go to Login
-            </Button>
+            <div className="flex justify-center">
+              <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-green-600"></div>
+            </div>
           </CardContent>
         </Card>
       </div>
@@ -117,7 +98,7 @@ export default function SignUpPage() {
               <AlertDescription>
                 <strong>Ready to use:</strong>
                 <br />
-                Email: owner@pokemoncards.com
+                Email: owner@pokemonloot.com
                 <br />
                 Password: pokemon123
               </AlertDescription>
@@ -134,8 +115,8 @@ export default function SignUpPage() {
         {/* Custom Account Creation */}
         <Card>
           <CardHeader className="text-center">
-            <CardTitle className="text-xl font-bold">Create Custom Account</CardTitle>
-            <CardDescription>Or create your own account</CardDescription>
+            <CardTitle className="text-xl font-bold">Create Account</CardTitle>
+            <CardDescription>No email confirmation required!</CardDescription>
           </CardHeader>
           <CardContent>
             <form onSubmit={handleSignUp} className="space-y-4">
@@ -172,7 +153,7 @@ export default function SignUpPage() {
 
               <Button type="submit" className="w-full" disabled={loading}>
                 {loading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-                Create Account
+                Create Account & Login
               </Button>
             </form>
 

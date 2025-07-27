@@ -20,5 +20,11 @@ export const createClient = (cookieStore: ReturnType<typeof cookies>) => {
         }
       },
     },
+    auth: {
+      // Disable email confirmation checks
+      autoRefreshToken: true,
+      persistSession: true,
+      detectSessionInUrl: false, // Disable email confirmation URL detection
+    },
   })
 }

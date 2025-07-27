@@ -9,7 +9,6 @@ const inter = Inter({ subsets: ["latin"] })
 export const metadata: Metadata = {
   title: "Pokemon Card Inventory Manager",
   description: "Manage your Pokemon card collection and inventory",
-    generator: 'v0.dev'
 }
 
 export default function RootLayout({
