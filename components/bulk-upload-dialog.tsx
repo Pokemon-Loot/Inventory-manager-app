@@ -1,15 +1,26 @@
-'use client'
+"use client"
 
-import { useState } from 'react'
-import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog'
-import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
-import { Label } from '@/components/ui/label'
-import { Textarea } from '@/components/ui/textarea'
-import { Progress } from '@/components/ui/progress'
-import { createClient } from '@/utils/supabase/client'
-import { Upload, Download, FileText, AlertCircle } from 'lucide-react'
-import Papa from 'papaparse'
+import type React from "react"
+
+import { useState } from "react"
+import { useAuth } from "@/contexts/auth-context"
+import { createClient } from "@/utils/supabase/client"
+import { Button } from "@/components/ui/button"
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog"
+import { Textarea } from "@/components/ui/textarea"
+import { Label } from "@/components/ui/label"
+import { Alert, AlertDescription } from "@/components/ui/alert"
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
+import { Loader2, Upload, FileSpreadsheet, Copy, AlertTriangle } from "lucide-react"
+
+const supabase = createClient()
 
 interface BulkUploadDialogProps {
   open: boolean
@@ -17,252 +28,283 @@ interface BulkUploadDialogProps {
   onSuccess: () => void
 }
 
-interface CSVRow {
-  name: string
-  set_name: string
-  card_number?: string
-  rarity: string
-  condition: string
-  quantity: string
-  purchase_price?: string
-  market_price?: string
-  image_url?: string
-  location?: string
-  notes?: string
-}
-
 export function BulkUploadDialog({ open, onOpenChange, onSuccess }: BulkUploadDialogProps) {
-  const [file, setFile] = useState<File | null>(null)
-  const [csvData, setCsvData] = useState<CSVRow[]>([])
-  const [uploading, setUploading] = useState(false)
-  const [progress, setProgress] = useState(0)
-  const [errors, setErrors] = useState<string[]>([])
+  const { user } = useAuth()
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState("")
+  const [csvData, setCsvData] = useState("")
+  const [pasteData, setPasteData] = useState("")
+  const [previewCards, setPreviewCards] = useState<any[]>([])
 
-  const supabase = createClient()
+  const parseCSVData = (data: string) => {
+    const lines = data.trim().split("\n")
+    if (lines.length < 2) {
+      throw new Error("CSV must have at least a header row and one data row")
+    }
 
-  const handleFileChange = (event: React.ChangeEvent<HTMLInputElement>) => {
-    const selectedFile = event.target.files?.[0]
-    if (selectedFile && selectedFile.type === 'text/csv') {
-      setFile(selectedFile)
-      parseCSV(selectedFile)
+    const headers = lines[0].split(",").map((h) => h.trim().replace(/"/g, ""))
+
+    const cards = []
+    for (let i = 1; i < lines.length; i++) {
+      const values = lines[i].split(",").map((v) => v.trim().replace(/"/g, ""))
+
+      if (values.length >= 3 && values[2]) {
+        // At least category, sub_category, title
+        const card = {
+          category: values[0] || "Trading Card Games",
+          sub_category: values[1] || "Pokémon Cards",
+          title: values[2] || "",
+          description: values[3] || "",
+          quantity: Number.parseInt(values[4]) || 1,
+          type: values[5] || "Buy it Now",
+          price: Number.parseFloat(values[6]) || 0,
+          shipping_profile: values[7] || "0-1 oz",
+          condition: values[8] || "Near Mint",
+          selling_price: Number.parseFloat(values[9]) || 0,
+          sku: values[10] || null, // Allow null/empty SKUs instead of empty string
+          image_1: values[11] || "",
+          image_2: values[12] || "",
+          user_id: user?.id,
+        }
+        cards.push(card)
+      }
+    }
+    return cards
+  }
+
+  const handleFileUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0]
+    if (file) {
+      const reader = new FileReader()
+      reader.onload = (e) => {
+        const content = e.target?.result as string
+        setCsvData(content)
+        try {
+          const parsed = parseCSVData(content)
+          setPreviewCards(parsed.slice(0, 3)) // Show first 3 for preview
+        } catch (err) {
+          setPreviewCards([])
+        }
+      }
+      reader.readAsText(file)
     }
   }
 
-  const parseCSV = (file: File) => {
-    Papa.parse(file, {
-      header: true,
-      complete: (results) => {
-        const data = results.data as CSVRow[]
-        setCsvData(data.filter(row => row.name && row.name.trim() !== ''))
-        
-        // Validate data
-        const validationErrors: string[] = []
-        data.forEach((row, index) => {
-          if (!row.name) validationErrors.push(`Row ${index + 1}: Missing card name`)
-          if (!row.set_name) validationErrors.push(`Row ${index + 1}: Missing set name`)
-          if (!row.rarity) validationErrors.push(`Row ${index + 1}: Missing rarity`)
-          if (!row.condition) validationErrors.push(`Row ${index + 1}: Missing condition`)
-          if (!row.quantity || isNaN(parseInt(row.quantity))) {
-            validationErrors.push(`Row ${index + 1}: Invalid quantity`)
-          }
-        })
-        setErrors(validationErrors)
-      },
-      error: (error) => {
-        setErrors([`CSV parsing error: ${error.message}`])
+  const handleDataChange = (data: string) => {
+    try {
+      if (data.trim()) {
+        const parsed = parseCSVData(data)
+        setPreviewCards(parsed.slice(0, 3))
+      } else {
+        setPreviewCards([])
       }
-    })
+    } catch (err) {
+      setPreviewCards([])
+    }
   }
 
-  const handleUpload = async () => {
-    if (csvData.length === 0) return
+  const handleBulkUpload = async (data: string) => {
+    if (!user || !data.trim()) return
 
-    setUploading(true)
-    setProgress(0)
+    setLoading(true)
+    setError("")
 
     try {
-      const batchSize = 10
-      const batches = []
-      
-      for (let i = 0; i < csvData.length; i += batchSize) {
-        batches.push(csvData.slice(i, i + batchSize))
+      const cards = parseCSVData(data)
+
+      if (cards.length === 0) {
+        throw new Error("No valid cards found in the data")
       }
 
-      for (let i = 0; i < batches.length; i++) {
-        const batch = batches[i]
-        const cardsToInsert = batch.map(row => ({
-          name: row.name,
-          set_name: row.set_name,
-          card_number: row.card_number || null,
-          rarity: row.rarity,
-          condition: row.condition,
-          quantity: parseInt(row.quantity),
-          purchase_price: row.purchase_price ? parseFloat(row.purchase_price) : null,
-          market_price: row.market_price ? parseFloat(row.market_price) : null,
-          image_url: row.image_url || null,
-          location: row.location || null,
-          notes: row.notes || null
-        }))
+      // Process cards in batches to handle large uploads
+      const batchSize = 50
+      let successCount = 0
+      let errorCount = 0
+      const errors: string[] = []
 
-        const { error } = await supabase
-          .from('cards')
-          .insert(cardsToInsert)
+      for (let i = 0; i < cards.length; i += batchSize) {
+        const batch = cards.slice(i, i + batchSize)
 
-        if (error) throw error
+        // Remove this SKU processing block:
+        // const processedBatch = batch.map((card, index) => {
+        //   if (card.sku && card.sku.trim()) {
+        //     card.sku = `${card.sku}-${Date.now()}-${i + index}`
+        //   } else {
+        //     card.sku = null
+        //   }
+        //   return card
+        // })
 
-        setProgress(((i + 1) / batches.length) * 100)
+        // Replace with simple batch processing:
+        try {
+          const { error: batchError } = await supabase.from("pokemon_cards").insert(batch)
+
+          if (batchError) {
+            console.error(`Batch ${i / batchSize + 1} error:`, batchError)
+            errors.push(`Batch ${i / batchSize + 1}: ${batchError.message}`)
+            errorCount += batch.length
+          } else {
+            successCount += batch.length
+          }
+        } catch (batchErr: any) {
+          console.error(`Batch ${i / batchSize + 1} exception:`, batchErr)
+          errors.push(`Batch ${i / batchSize + 1}: ${batchErr.message}`)
+          errorCount += batch.length
+        }
       }
 
-      onSuccess()
-      resetForm()
-    } catch (error) {
-      console.error('Error uploading cards:', error)
-      setErrors([`Upload error: ${error}`])
+      if (successCount > 0) {
+        onSuccess()
+        onOpenChange(false)
+        setCsvData("")
+        setPasteData("")
+        setPreviewCards([])
+
+        if (errorCount > 0) {
+          setError(
+            `Uploaded ${successCount} cards successfully. ${errorCount} cards failed. Check console for details.`,
+          )
+        }
+      } else {
+        throw new Error(`All uploads failed. Errors: ${errors.join("; ")}`)
+      }
+    } catch (error: any) {
+      console.error("Upload error:", error)
+      setError(error.message)
     } finally {
-      setUploading(false)
+      setLoading(false)
     }
   }
 
-  const resetForm = () => {
-    setFile(null)
-    setCsvData([])
-    setProgress(0)
-    setErrors([])
-  }
-
-  const downloadTemplate = () => {
-    const template = `name,set_name,card_number,rarity,condition,quantity,purchase_price,market_price,image_url,location,notes
-Charizard,Base Set,4/102,Rare Holo,Near Mint,1,300.00,350.00,https://images.pokemontcg.io/base1/4_hires.png,Binder 1,First edition
-Pikachu,Base Set,58/102,Common,Near Mint,2,20.00,25.00,https://images.pokemontcg.io/base1/58_hires.png,Box A,Yellow cheeks variant`
-
-    const blob = new Blob([template], { type: 'text/csv' })
-    const url = window.URL.createObjectURL(blob)
-    const a = document.createElement('a')
-    a.href = url
-    a.download = 'pokemon-cards-template.csv'
-    a.click()
-    window.URL.revokeObjectURL(url)
-  }
+  const sampleCSV = `Category,Sub Category,Title,Description,Quantity,Type,Price,Shipping Profile,Condition,Selling Price,SKU,Image 1,Image 2
+Trading Card Games,Pokémon Cards,Slaking Ex 227/191 Full Art,D,1,Buy it Now,2.00,0-1 oz,Near Mint,9.59,SLAKING-001,,
+Trading Card Games,Pokémon Cards,Base Set Pikachu 58/102,Original Pikachu from Base Set,2,Buy it Now,15.00,0-1 oz,Excellent,25.00,PIKACHU-001,https://example.com/pikachu.jpg,
+Trading Card Games,Pokémon Cards,Charizard Base Set 4/102,Holographic Charizard card,1,Auction,150.00,1-2 oz,Near Mint,200.00,,https://example.com/charizard1.jpg,https://example.com/charizard2.jpg`
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-2xl">
+      <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle>Bulk Upload Cards</DialogTitle>
-          <DialogDescription>
-            Upload multiple cards at once using a CSV file
-          </DialogDescription>
+          <DialogDescription>Upload multiple cards using CSV file, Google Sheets data, or copy/paste</DialogDescription>
         </DialogHeader>
 
-        <div className="space-y-6">
-          {/* Template Download */}
-          <div className="flex items-center justify-between p-4 bg-blue-50 rounded-lg">
-            <div className="flex items-center gap-3">
-              <FileText className="h-5 w-5 text-blue-600" />
-              <div>
-                <p className="font-medium text-blue-900">Need a template?</p>
-                <p className="text-sm text-blue-700">Download our CSV template to get started</p>
-              </div>
-            </div>
-            <Button onClick={downloadTemplate} variant="outline" size="sm">
-              <Download className="h-4 w-4 mr-2" />
-              Download Template
-            </Button>
-          </div>
+        <Tabs defaultValue="csv" className="w-full">
+          <TabsList className="grid w-full grid-cols-3">
+            <TabsTrigger value="csv">
+              <FileSpreadsheet className="mr-2 h-4 w-4" />
+              CSV File
+            </TabsTrigger>
+            <TabsTrigger value="paste">
+              <Copy className="mr-2 h-4 w-4" />
+              Copy & Paste
+            </TabsTrigger>
+            <TabsTrigger value="sample">Sample Format</TabsTrigger>
+          </TabsList>
 
-          {/* File Upload */}
+          <TabsContent value="csv" className="space-y-4">
+            <div className="space-y-2">
+              <Label htmlFor="csv-file">Upload CSV File</Label>
+              <input
+                id="csv-file"
+                type="file"
+                accept=".csv"
+                onChange={handleFileUpload}
+                className="block w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100"
+              />
+            </div>
+            {csvData && (
+              <div className="space-y-2">
+                <Label>Preview</Label>
+                <Textarea
+                  value={csvData}
+                  onChange={(e) => {
+                    setCsvData(e.target.value)
+                    handleDataChange(e.target.value)
+                  }}
+                  rows={10}
+                  className="font-mono text-sm"
+                />
+              </div>
+            )}
+          </TabsContent>
+
+          <TabsContent value="paste" className="space-y-4">
+            <Alert>
+              <AlertDescription>
+                <strong>From Google Sheets:</strong> Select your data → Copy (Ctrl+C) → Paste below
+                <br />
+                <strong>From Excel:</strong> Select your data → Copy → Paste below
+                <br />
+                <strong>SKU Note:</strong> Duplicate or empty SKUs are now allowed
+              </AlertDescription>
+            </Alert>
+            <div className="space-y-2">
+              <Label htmlFor="paste-data">Paste CSV Data</Label>
+              <Textarea
+                id="paste-data"
+                value={pasteData}
+                onChange={(e) => {
+                  setPasteData(e.target.value)
+                  handleDataChange(e.target.value)
+                }}
+                placeholder="Paste your CSV data here (including headers)..."
+                rows={15}
+                className="font-mono text-sm"
+              />
+            </div>
+          </TabsContent>
+
+          <TabsContent value="sample" className="space-y-4">
+            <div className="space-y-2">
+              <Label>Sample CSV Format</Label>
+              <Textarea value={sampleCSV} readOnly rows={10} className="font-mono text-sm bg-gray-50" />
+              <Alert>
+                <AlertDescription>
+                  <strong>Column Order (must match exactly):</strong>
+                  <br />
+                  Category, Sub Category, Title, Description, Quantity, Type, Price, Shipping Profile, Condition,
+                  Selling Price, SKU, Image 1, Image 2
+                  <br />
+                  <strong>SKU Note:</strong> SKU can be empty or duplicate - system will handle it automatically
+                </AlertDescription>
+              </Alert>
+            </div>
+          </TabsContent>
+        </Tabs>
+
+        {/* Preview Section */}
+        {previewCards.length > 0 && (
           <div className="space-y-2">
-            <Label htmlFor="csv-file">Upload CSV File</Label>
-            <Input
-              id="csv-file"
-              type="file"
-              accept=".csv"
-              onChange={handleFileChange}
-            />
-            <p className="text-sm text-gray-600">
-              Select a CSV file with your Pokemon card data
-            </p>
+            <Label>Preview (First 3 cards)</Label>
+            <div className="bg-gray-50 p-4 rounded-lg max-h-40 overflow-y-auto">
+              {previewCards.map((card, index) => (
+                <div key={index} className="text-sm border-b border-gray-200 pb-2 mb-2 last:border-b-0">
+                  <strong>{card.title}</strong> - {card.condition} - ${card.price}
+                  {card.sku && <span className="text-gray-500"> (SKU: {card.sku})</span>}
+                </div>
+              ))}
+            </div>
           </div>
+        )}
 
-          {/* Errors */}
-          {errors.length > 0 && (
-            <div className="p-4 bg-red-50 rounded-lg">
-              <div className="flex items-center gap-2 mb-2">
-                <AlertCircle className="h-5 w-5 text-red-600" />
-                <p className="font-medium text-red-900">Validation Errors</p>
-              </div>
-              <ul className="text-sm text-red-700 space-y-1">
-                {errors.slice(0, 10).map((error, index) => (
-                  <li key={index}>• {error}</li>
-                ))}
-                {errors.length > 10 && (
-                  <li>• ... and {errors.length - 10} more errors</li>
-                )}
-              </ul>
-            </div>
-          )}
+        {error && (
+          <Alert variant={error.includes("successfully") ? "default" : "destructive"}>
+            <AlertTriangle className="h-4 w-4" />
+            <AlertDescription>{error}</AlertDescription>
+          </Alert>
+        )}
 
-          {/* Preview */}
-          {csvData.length > 0 && errors.length === 0 && (
-            <div className="space-y-2">
-              <p className="font-medium">Preview ({csvData.length} cards)</p>
-              <div className="max-h-40 overflow-y-auto border rounded">
-                <table className="w-full text-sm">
-                  <thead className="bg-gray-50">
-                    <tr>
-                      <th className="p-2 text-left">Name</th>
-                      <th className="p-2 text-left">Set</th>
-                      <th className="p-2 text-left">Rarity</th>
-                      <th className="p-2 text-right">Qty</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {csvData.slice(0, 5).map((row, index) => (
-                      <tr key={index} className="border-t">
-                        <td className="p-2">{row.name}</td>
-                        <td className="p-2">{row.set_name}</td>
-                        <td className="p-2">{row.rarity}</td>
-                        <td className="p-2 text-right">{row.quantity}</td>
-                      </tr>
-                    ))}
-                    {csvData.length > 5 && (
-                      <tr className="border-t">
-                        <td colSpan={4} className="p-2 text-center text-gray-500">
-                          ... and {csvData.length - 5} more cards
-                        </td>
-                      </tr>
-                    )}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-          )}
-
-          {/* Upload Progress */}
-          {uploading && (
-            <div className="space-y-2">
-              <div className="flex justify-between text-sm">
-                <span>Uploading cards...</span>
-                <span>{Math.round(progress)}%</span>
-              </div>
-              <Progress value={progress} />
-            </div>
-          )}
-
-          {/* Actions */}
-          <div className="flex justify-end gap-2">
-            <Button variant="outline" onClick={() => onOpenChange(false)}>
-              Cancel
-            </Button>
-            <Button 
-              onClick={handleUpload} 
-              disabled={csvData.length === 0 || errors.length > 0 || uploading}
-            >
-              <Upload className="h-4 w-4 mr-2" />
-              {uploading ? 'Uploading...' : `Upload ${csvData.length} Cards`}
-            </Button>
-          </div>
-        </div>
+        <DialogFooter>
+          <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
+            Cancel
+          </Button>
+          <Button onClick={() => handleBulkUpload(csvData || pasteData)} disabled={loading || (!csvData && !pasteData)}>
+            {loading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+            <Upload className="mr-2 h-4 w-4" />
+            Upload Cards
+          </Button>
+        </DialogFooter>
       </DialogContent>
     </Dialog>
   )

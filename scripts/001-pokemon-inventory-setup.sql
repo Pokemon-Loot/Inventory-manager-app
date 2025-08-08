@@ -71,36 +71,6 @@ INSERT INTO pokemon_cards (
   auth.uid()
 ) ON CONFLICT DO NOTHING;
 
--- Create the cards table
-CREATE TABLE IF NOT EXISTS cards (
-    id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
-    name VARCHAR(255) NOT NULL,
-    set_name VARCHAR(255) NOT NULL,
-    card_number VARCHAR(50),
-    rarity VARCHAR(100),
-    condition VARCHAR(50) NOT NULL,
-    quantity INTEGER NOT NULL DEFAULT 1,
-    purchase_price DECIMAL(10,2),
-    market_price DECIMAL(10,2),
-    image_url TEXT,
-    location VARCHAR(255),
-    notes TEXT,
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
-);
-
--- Create an index on name for faster searches
-CREATE INDEX IF NOT EXISTS idx_cards_name ON cards(name);
-CREATE INDEX IF NOT EXISTS idx_cards_set_name ON cards(set_name);
-CREATE INDEX IF NOT EXISTS idx_cards_created_at ON cards(created_at);
-
--- Enable Row Level Security
-ALTER TABLE cards ENABLE ROW LEVEL SECURITY;
-
--- Create policy to allow users to see all cards (for demo purposes)
-CREATE POLICY "Allow all operations on cards" ON cards
-    FOR ALL USING (true);
-
 -- Create a function to update the updated_at timestamp
 CREATE OR REPLACE FUNCTION update_updated_at_column()
 RETURNS TRIGGER AS $$
@@ -116,43 +86,3 @@ CREATE TRIGGER update_pokemon_cards_updated_at
     BEFORE UPDATE ON pokemon_cards
     FOR EACH ROW
     EXECUTE FUNCTION update_updated_at_column();
-
--- Create trigger to automatically update updated_at for cards table
-DROP TRIGGER IF EXISTS update_cards_updated_at ON cards;
-CREATE TRIGGER update_cards_updated_at
-    BEFORE UPDATE ON cards
-    FOR EACH ROW
-    EXECUTE FUNCTION update_updated_at_column();
-
--- Create a demo user account
-INSERT INTO auth.users (
-    id,
-    email,
-    encrypted_password,
-    email_confirmed_at,
-    created_at,
-    updated_at,
-    raw_app_meta_data,
-    raw_user_meta_data,
-    is_super_admin,
-    role
-) VALUES (
-    gen_random_uuid(),
-    'demo@example.com',
-    crypt('demo123', gen_salt('bf')),
-    NOW(),
-    NOW(),
-    NOW(),
-    '{"provider": "email", "providers": ["email"]}',
-    '{}',
-    false,
-    'authenticated'
-) ON CONFLICT (email) DO NOTHING;
-
--- Insert some sample cards
-INSERT INTO cards (name, set_name, card_number, rarity, condition, quantity, market_price, image_url) VALUES
-('Charizard', 'Base Set', '4/102', 'Rare Holo', 'Near Mint', 1, 350.00, 'https://images.pokemontcg.io/base1/4_hires.png'),
-('Blastoise', 'Base Set', '2/102', 'Rare Holo', 'Near Mint', 1, 280.00, 'https://images.pokemontcg.io/base1/2_hires.png'),
-('Venusaur', 'Base Set', '15/102', 'Rare Holo', 'Near Mint', 1, 220.00, 'https://images.pokemontcg.io/base1/15_hires.png'),
-('Pikachu', 'Base Set', '58/102', 'Common', 'Near Mint', 3, 45.00, 'https://images.pokemontcg.io/base1/58_hires.png')
-ON CONFLICT DO NOTHING;

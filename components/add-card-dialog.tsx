@@ -1,39 +1,28 @@
-'use client'
+"use client"
 
-import { useState } from 'react'
-import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog'
-import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
-import { Label } from '@/components/ui/label'
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
-import { Textarea } from '@/components/ui/textarea'
-import { Badge } from '@/components/ui/badge'
-import { Card, CardContent } from '@/components/ui/card'
-import { createClient } from '@/utils/supabase/client'
-import { Search, Plus, Upload, ExternalLink } from 'lucide-react'
-import Image from 'next/image'
+import type React from "react"
 
-interface CardSearchResult {
-  id: string
-  name: string
-  set: {
-    name: string
-    series: string
-  }
-  number: string
-  rarity: string
-  images: {
-    small: string
-    large: string
-  }
-  tcgplayer?: {
-    prices?: {
-      holofoil?: { market: number }
-      normal?: { market: number }
-      reverseHolofoil?: { market: number }
-    }
-  }
-}
+import { useState } from "react"
+import { useAuth } from "@/contexts/auth-context"
+import { createClient } from "@/utils/supabase/client"
+import { Button } from "@/components/ui/button"
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog"
+import { Input } from "@/components/ui/input"
+import { Label } from "@/components/ui/label"
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
+import { Textarea } from "@/components/ui/textarea"
+import { Alert, AlertDescription } from "@/components/ui/alert"
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
+import { Loader2, Upload, Link, X, Search } from "lucide-react"
+
+const supabase = createClient()
 
 interface AddCardDialogProps {
   open: boolean
@@ -41,285 +30,507 @@ interface AddCardDialogProps {
   onSuccess: () => void
 }
 
+// Updated dropdown options based on your template
+const CATEGORIES = ["Trading Card Games", "Collectibles", "Sports Cards"]
+
+const SUB_CATEGORIES = ["Pokémon Cards", "Magic: The Gathering", "Yu-Gi-Oh!", "Dragon Ball Super"]
+
+const TYPES = ["Buy it Now", "Auction", "Best Offer"]
+
+const CONDITIONS = ["Mint", "Near Mint", "Excellent", "Very Good", "Good", "Fair", "Poor"]
+
+const SHIPPING_PROFILES = ["0-1 oz", "1-2 oz", "2-3 oz", "3-4 oz", "First Class", "Priority Mail"]
+
 export function AddCardDialog({ open, onOpenChange, onSuccess }: AddCardDialogProps) {
-  const [searchQuery, setSearchQuery] = useState('')
-  const [searchResults, setSearchResults] = useState<CardSearchResult[]>([])
-  const [selectedCard, setSelectedCard] = useState<CardSearchResult | null>(null)
+  const { user } = useAuth()
   const [loading, setLoading] = useState(false)
-  const [saving, setSaving] = useState(false)
-  
-  // Form fields
-  const [condition, setCondition] = useState('Near Mint')
-  const [quantity, setQuantity] = useState(1)
-  const [purchasePrice, setPurchasePrice] = useState('')
-  const [location, setLocation] = useState('')
-  const [notes, setNotes] = useState('')
-  const [customImageUrl, setCustomImageUrl] = useState('')
+  const [error, setError] = useState("")
+  const [uploadingImage, setUploadingImage] = useState<1 | 2 | null>(null)
+  const [formData, setFormData] = useState({
+    category: "Trading Card Games",
+    sub_category: "Pokémon Cards",
+    title: "",
+    description: "",
+    quantity: 1,
+    type: "Buy it Now",
+    price: 0,
+    shipping_profile: "0-1 oz",
+    condition: "Near Mint",
+    selling_price: 0,
+    sku: "",
+    image_1: "",
+    image_2: "",
+  })
+  const [scraping, setScraping] = useState(false)
 
-  const supabase = createClient()
-
-  const searchCards = async () => {
-    if (!searchQuery.trim()) return
-    
-    setLoading(true)
+  // Scrape card info from API and autofill
+  // Helper to remove accents for subcategory check
+  function normalize(str: string) {
+    return str.normalize("NFD").replace(/\p{Diacritic}/gu, "").toLowerCase()
+  }
+  // Card search results for dropdown
+  const [searchResults, setSearchResults] = useState<any[]>([])
+  const [showResults, setShowResults] = useState(false)
+  const handleScrape = async () => {
+    if (!formData.title) {
+      setError("Enter a Pokémon card name to search.")
+      return
+    }
+    setScraping(true)
+    setError("")
+    setShowResults(false)
     try {
-      // Search Pokemon TCG API
-      const response = await fetch(`https://api.pokemontcg.io/v2/cards?q=name:${encodeURIComponent(searchQuery)}`)
-      const data = await response.json()
-      
-      if (data.data) {
-        setSearchResults(data.data.slice(0, 12)) // Limit to 12 results
+      const res = await fetch(`/api/scrape-card?name=${encodeURIComponent(formData.title)}`)
+      const data = await res.json()
+      if (data.cards && data.cards.length > 0) {
+        setSearchResults(data.cards)
+        setShowResults(true)
+      } else {
+        setSearchResults([])
+        setShowResults(false)
+        setError("No card data found.")
       }
-    } catch (error) {
-      console.error('Search error:', error)
-      // Fallback to mock data
-      setSearchResults([
-        {
-          id: 'mock-1',
-          name: searchQuery,
-          set: { name: 'Base Set', series: 'Base' },
-          number: '1',
-          rarity: 'Rare',
-          images: { 
-            small: '/placeholder.svg?height=200&width=150',
-            large: '/placeholder.svg?height=400&width=300'
-          }
-        }
-      ])
+    } catch (e: any) {
+      setError("Failed to scrape card info: " + e.message)
+    } finally {
+      setScraping(false)
+    }
+  }
+
+  // Autofill form with selected card
+  const handleSelectCard = (card: any) => {
+    let desc = '';
+    if (card.set) desc += card.set;
+    if (card.number) desc += ` #${card.number}`;
+    if (card.rarity) desc += ` - ${card.rarity}`;
+    if (card.lastSoldPrice) desc += `\nLast Sold: $${card.lastSoldPrice.toFixed(2)}`;
+    if (card.loosePrice) desc += `\nLoose Price: $${card.loosePrice.toFixed(2)}`;
+    setFormData((prev) => ({
+      ...prev,
+      title: card.name || prev.title,
+      price: card.price || card.lastSoldPrice || card.loosePrice || prev.price,
+      image_1: card.image || prev.image_1,
+      description: desc || prev.description,
+      selling_price: card.lastSoldPrice || prev.selling_price
+    }))
+    setShowResults(false)
+    setSearchResults([])
+  }
+
+  const uploadImage = async (file: File, imageNumber: 1 | 2) => {
+    if (!user) return
+
+    setUploadingImage(imageNumber)
+    try {
+      const fileExt = file.name.split(".").pop()
+      const fileName = `${user.id}/${Date.now()}.${fileExt}`
+
+      const { data, error } = await supabase.storage.from("card-images").upload(fileName, file)
+
+      if (error) throw error
+
+      const {
+        data: { publicUrl },
+      } = supabase.storage.from("card-images").getPublicUrl(fileName)
+
+      setFormData((prev) => ({
+        ...prev,
+        [`image_${imageNumber}`]: publicUrl,
+      }))
+    } catch (error: any) {
+      setError(`Failed to upload image: ${error.message}`)
+    } finally {
+      setUploadingImage(null)
+    }
+  }
+
+  const handleFileUpload = (event: React.ChangeEvent<HTMLInputElement>, imageNumber: 1 | 2) => {
+    const file = event.target.files?.[0]
+    if (file) {
+      // Check file size (max 5MB)
+      if (file.size > 5 * 1024 * 1024) {
+        setError("Image must be smaller than 5MB")
+        return
+      }
+
+      // Check file type
+      if (!file.type.startsWith("image/")) {
+        setError("Please select an image file")
+        return
+      }
+
+      uploadImage(file, imageNumber)
+    }
+  }
+
+  const removeImage = (imageNumber: 1 | 2) => {
+    setFormData((prev) => ({
+      ...prev,
+      [`image_${imageNumber}`]: "",
+    }))
+  }
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!user) return
+
+    setLoading(true)
+    setError("")
+
+    try {
+      // Handle SKU - make it unique if provided, or set to null if empty
+      const cardData = {
+        ...formData,
+        user_id: user.id,
+        sku: formData.sku.trim() || null, // Simple: use the SKU as-is or null if empty
+      }
+
+      const { error } = await supabase.from("pokemon_cards").insert([cardData])
+
+      if (error) throw error
+
+      onSuccess()
+      onOpenChange(false)
+      // Reset form
+      setFormData({
+        category: "Trading Card Games",
+        sub_category: "Pokémon Cards",
+        title: "",
+        description: "",
+        quantity: 1,
+        type: "Buy it Now",
+        price: 0,
+        shipping_profile: "0-1 oz",
+        condition: "Near Mint",
+        selling_price: 0,
+        sku: "",
+        image_1: "",
+        image_2: "",
+      })
+    } catch (error: any) {
+      setError(error.message)
     } finally {
       setLoading(false)
     }
   }
 
-  const handleCardSelect = (card: CardSearchResult) => {
-    setSelectedCard(card)
-    setCustomImageUrl(card.images.large)
-  }
+  const ImageUploadSection = ({ imageNumber }: { imageNumber: 1 | 2 }) => {
+    const imageUrl = formData[`image_${imageNumber}` as keyof typeof formData] as string
 
-  const handleSave = async () => {
-    if (!selectedCard) return
+    return (
+      <div className="space-y-3">
+        <Label>Image {imageNumber} (Optional)</Label>
 
-    setSaving(true)
-    try {
-      const marketPrice = selectedCard.tcgplayer?.prices?.holofoil?.market || 
-                         selectedCard.tcgplayer?.prices?.normal?.market || 
-                         0
+        <Tabs defaultValue="url" className="w-full">
+          <TabsList className="grid w-full grid-cols-2">
+            <TabsTrigger value="url">
+              <Link className="mr-2 h-4 w-4" />
+              URL
+            </TabsTrigger>
+            <TabsTrigger value="upload">
+              <Upload className="mr-2 h-4 w-4" />
+              Upload
+            </TabsTrigger>
+          </TabsList>
 
-      const { error } = await supabase
-        .from('cards')
-        .insert({
-          name: selectedCard.name,
-          set_name: selectedCard.set.name,
-          card_number: selectedCard.number,
-          rarity: selectedCard.rarity,
-          condition,
-          quantity,
-          purchase_price: purchasePrice ? parseFloat(purchasePrice) : null,
-          market_price: marketPrice,
-          image_url: customImageUrl || selectedCard.images.large,
-          location: location || null,
-          notes: notes || null
-        })
+          <TabsContent value="url" className="space-y-2">
+            <Input
+              type="url"
+              value={imageUrl}
+              onChange={(e) => setFormData((prev) => ({ ...prev, [`image_${imageNumber}`]: e.target.value }))}
+              placeholder="https://example.com/image.jpg"
+            />
+          </TabsContent>
 
-      if (error) throw error
+          <TabsContent value="upload" className="space-y-2">
+            <div className="flex items-center gap-2">
+              <input
+                type="file"
+                accept="image/*"
+                onChange={(e) => handleFileUpload(e, imageNumber)}
+                className="block w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100"
+                disabled={uploadingImage === imageNumber}
+              />
+              {uploadingImage === imageNumber && <Loader2 className="h-4 w-4 animate-spin" />}
+            </div>
+            <p className="text-xs text-gray-500">Max 5MB, JPG/PNG/GIF supported</p>
+          </TabsContent>
+        </Tabs>
 
-      onSuccess()
-      resetForm()
-    } catch (error) {
-      console.error('Error saving card:', error)
-    } finally {
-      setSaving(false)
-    }
-  }
-
-  const resetForm = () => {
-    setSearchQuery('')
-    setSearchResults([])
-    setSelectedCard(null)
-    setCondition('Near Mint')
-    setQuantity(1)
-    setPurchasePrice('')
-    setLocation('')
-    setNotes('')
-    setCustomImageUrl('')
+        {imageUrl && (
+          <div className="relative">
+            <img
+              src={imageUrl || "/placeholder.svg"}
+              alt={`Preview ${imageNumber}`}
+              className="w-32 h-32 object-cover rounded border"
+              onError={(e) => {
+                e.currentTarget.src = "/placeholder.svg?height=128&width=128&text=Invalid+Image"
+              }}
+            />
+            <Button
+              type="button"
+              size="sm"
+              variant="destructive"
+              className="absolute -top-2 -right-2 h-6 w-6 rounded-full p-0"
+              onClick={() => removeImage(imageNumber)}
+            >
+              <X className="h-3 w-3" />
+            </Button>
+          </div>
+        )}
+      </div>
+    )
   }
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
+      <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle>Add New Card</DialogTitle>
-          <DialogDescription>
-            Search for a Pokemon card and add it to your collection
-          </DialogDescription>
+          <DialogDescription>Add a new card to your inventory</DialogDescription>
         </DialogHeader>
 
-        <div className="space-y-6">
-          {/* Search Section */}
-          <div className="space-y-4">
-            <div className="flex gap-2">
-              <Input
-                placeholder="Search for Pokemon cards..."
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                onKeyPress={(e) => e.key === 'Enter' && searchCards()}
-              />
-              <Button onClick={searchCards} disabled={loading}>
-                <Search className="h-4 w-4" />
-              </Button>
-            </div>
+        <form onSubmit={handleSubmit} className="space-y-4">
+          {error && (
+            <Alert variant="destructive">
+              <AlertDescription>{error}</AlertDescription>
+            </Alert>
+          )}
 
-            {/* Search Results */}
-            {searchResults.length > 0 && (
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-4 max-h-96 overflow-y-auto">
-                {searchResults.map((card) => (
-                  <Card 
-                    key={card.id} 
-                    className={`cursor-pointer transition-all ${
-                      selectedCard?.id === card.id ? 'ring-2 ring-blue-500' : 'hover:shadow-md'
-                    }`}
-                    onClick={() => handleCardSelect(card)}
-                  >
-                    <CardContent className="p-3">
-                      <div className="aspect-[3/4] relative mb-2">
-                        <Image
-                          src={card.images.small || "/placeholder.svg"}
-                          alt={card.name}
-                          fill
-                          className="object-cover rounded"
-                          sizes="(max-width: 768px) 50vw, 25vw"
-                        />
-                      </div>
-                      <div className="space-y-1">
-                        <h4 className="font-medium text-sm truncate">{card.name}</h4>
-                        <p className="text-xs text-gray-600 truncate">{card.set.name}</p>
-                        <Badge variant="outline" className="text-xs">
-                          {card.rarity}
-                        </Badge>
-                      </div>
-                    </CardContent>
-                  </Card>
-                ))}
-              </div>
-            )}
+          {/* Category and Sub Category */}
+          <div className="grid grid-cols-2 gap-4">
+            <div className="space-y-2">
+              <Label htmlFor="category">Category</Label>
+              <Select
+                value={formData.category}
+                onValueChange={(value) => setFormData({ ...formData, category: value })}
+              >
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {CATEGORIES.map((category) => (
+                    <SelectItem key={category} value={category}>
+                      {category}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="sub_category">Sub Category</Label>
+              <Select
+                value={formData.sub_category}
+                onValueChange={(value) => setFormData({ ...formData, sub_category: value })}
+              >
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {SUB_CATEGORIES.map((subCategory) => (
+                    <SelectItem key={subCategory} value={subCategory}>
+                      {subCategory}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
           </div>
 
-          {/* Selected Card Details */}
-          {selectedCard && (
-            <div className="border-t pt-6">
-              <h3 className="text-lg font-semibold mb-4">Card Details</h3>
-              <div className="grid md:grid-cols-2 gap-6">
-                {/* Card Preview */}
-                <div className="space-y-4">
-                  <div className="aspect-[3/4] relative max-w-xs mx-auto">
-                    <Image
-                      src={customImageUrl || selectedCard.images.large}
-                      alt={selectedCard.name}
-                      fill
-                      className="object-cover rounded-lg"
-                      sizes="(max-width: 768px) 100vw, 50vw"
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="custom-image">Custom Image URL (optional)</Label>
-                    <Input
-                      id="custom-image"
-                      value={customImageUrl}
-                      onChange={(e) => setCustomImageUrl(e.target.value)}
-                      placeholder="Enter custom image URL..."
-                    />
-                  </div>
-                </div>
-
-                {/* Form Fields */}
-                <div className="space-y-4">
-                  <div>
-                    <h4 className="font-medium">{selectedCard.name}</h4>
-                    <p className="text-sm text-gray-600">
-                      {selectedCard.set.name} • {selectedCard.number}
-                    </p>
-                    <Badge variant="outline">{selectedCard.rarity}</Badge>
-                  </div>
-
-                  <div className="grid grid-cols-2 gap-4">
-                    <div>
-                      <Label htmlFor="condition">Condition</Label>
-                      <Select value={condition} onValueChange={setCondition}>
-                        <SelectTrigger>
-                          <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="Mint">Mint</SelectItem>
-                          <SelectItem value="Near Mint">Near Mint</SelectItem>
-                          <SelectItem value="Excellent">Excellent</SelectItem>
-                          <SelectItem value="Good">Good</SelectItem>
-                          <SelectItem value="Light Played">Light Played</SelectItem>
-                          <SelectItem value="Played">Played</SelectItem>
-                          <SelectItem value="Poor">Poor</SelectItem>
-                        </SelectContent>
-                      </Select>
-                    </div>
-
-                    <div>
-                      <Label htmlFor="quantity">Quantity</Label>
-                      <Input
-                        id="quantity"
-                        type="number"
-                        min="1"
-                        value={quantity}
-                        onChange={(e) => setQuantity(parseInt(e.target.value) || 1)}
-                      />
-                    </div>
-                  </div>
-
-                  <div className="grid grid-cols-2 gap-4">
-                    <div>
-                      <Label htmlFor="purchase-price">Purchase Price ($)</Label>
-                      <Input
-                        id="purchase-price"
-                        type="number"
-                        step="0.01"
-                        value={purchasePrice}
-                        onChange={(e) => setPurchasePrice(e.target.value)}
-                        placeholder="0.00"
-                      />
-                    </div>
-
-                    <div>
-                      <Label htmlFor="location">Location</Label>
-                      <Input
-                        id="location"
-                        value={location}
-                        onChange={(e) => setLocation(e.target.value)}
-                        placeholder="Binder, Box, etc."
-                      />
-                    </div>
-                  </div>
-
-                  <div>
-                    <Label htmlFor="notes">Notes</Label>
-                    <Textarea
-                      id="notes"
-                      value={notes}
-                      onChange={(e) => setNotes(e.target.value)}
-                      placeholder="Additional notes about this card..."
-                      rows={3}
-                    />
-                  </div>
-                </div>
-              </div>
-
-              <div className="flex justify-end gap-2 mt-6">
-                <Button variant="outline" onClick={() => onOpenChange(false)}>
-                  Cancel
-                </Button>
-                <Button onClick={handleSave} disabled={saving}>
-                  {saving ? 'Adding...' : 'Add to Collection'}
-                </Button>
-              </div>
+          {/* Title with Scrape button */}
+          <div className="space-y-2">
+            <Label htmlFor="title">Title *</Label>
+            <div className="flex gap-2">
+              <Input
+                id="title"
+                value={formData.title}
+                onChange={(e) => setFormData({ ...formData, title: e.target.value })}
+                placeholder="e.g., Slaking Ex 227/191 Full Art"
+                required
+              />
+              <Button
+                type="button"
+                variant="secondary"
+                onClick={handleScrape}
+                disabled={scraping || !formData.title}
+                title={
+                  scraping
+                    ? "Scraping..."
+                    : !formData.title
+                    ? "Enter a card name to enable search"
+                    : "Scrape card info"
+                }
+              >
+                {scraping ? <Loader2 className="h-4 w-4 animate-spin" /> : <Search className="h-4 w-4" />}
+              </Button>
             </div>
-          )}
-        </div>
+            {showResults && searchResults.length > 0 && (
+              <div className="border rounded bg-white shadow-lg max-h-64 overflow-y-auto z-50 relative mt-2">
+                <ul>
+                  {searchResults.map((card, idx) => (
+                    <li
+                      key={idx}
+                      className="flex items-center gap-2 px-2 py-1 hover:bg-blue-100 cursor-pointer border-b last:border-b-0"
+                      onClick={() => handleSelectCard(card)}
+                    >
+                      {card.image && (
+                        <img src={card.image} alt={card.name} className="w-10 h-10 object-contain rounded" />
+                      )}
+                      <div>
+                        <div className="font-semibold text-sm">{card.name}</div>
+                        {card.set && <div className="text-xs text-gray-500">{card.set}{card.number ? ` #${card.number}` : ''}{card.rarity ? ` - ${card.rarity}` : ''}</div>}
+                        {card.price && <div className="text-xs text-green-700">${card.price.toFixed(2)}</div>}
+                        {card.lastSoldPrice && <div className="text-xs text-blue-700">Last Sold: ${card.lastSoldPrice.toFixed(2)}</div>}
+                      </div>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+            {error && (
+              <Alert variant="destructive" className="mt-2">
+                <AlertDescription>{error}</AlertDescription>
+              </Alert>
+            )}
+            <p className="text-xs text-gray-500">Enter a Pokémon card name and click the search icon to see all results. Click a result to autofill info.</p>
+          </div>
+
+          {/* Description */}
+          <div className="space-y-2">
+            <Label htmlFor="description">Description</Label>
+            <Textarea
+              id="description"
+              value={formData.description}
+              onChange={(e) => setFormData({ ...formData, description: e.target.value })}
+              rows={3}
+              placeholder="Card description (optional)..."
+            />
+          </div>
+
+          {/* Quantity, Type, Condition */}
+          <div className="grid grid-cols-3 gap-4">
+            <div className="space-y-2">
+              <Label htmlFor="quantity">Quantity *</Label>
+              <Input
+                id="quantity"
+                type="number"
+                min="0"
+                value={formData.quantity}
+                onChange={(e) => setFormData({ ...formData, quantity: Number.parseInt(e.target.value) || 0 })}
+                required
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="type">Type</Label>
+              <Select value={formData.type} onValueChange={(value) => setFormData({ ...formData, type: value })}>
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {TYPES.map((type) => (
+                    <SelectItem key={type} value={type}>
+                      {type}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="condition">Condition</Label>
+              <Select
+                value={formData.condition}
+                onValueChange={(value) => setFormData({ ...formData, condition: value })}
+              >
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {CONDITIONS.map((condition) => (
+                    <SelectItem key={condition} value={condition}>
+                      {condition}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+
+          {/* Price and Selling Price */}
+          <div className="grid grid-cols-2 gap-4">
+            <div className="space-y-2">
+              <Label htmlFor="price">Listing Price ($) *</Label>
+              <Input
+                id="price"
+                type="number"
+                step="0.01"
+                min="0"
+                value={formData.price}
+                onChange={(e) => setFormData({ ...formData, price: Number.parseFloat(e.target.value) || 0 })}
+                required
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="selling_price">Selling Price ($)</Label>
+              <Input
+                id="selling_price"
+                type="number"
+                step="0.01"
+                min="0"
+                value={formData.selling_price}
+                onChange={(e) => setFormData({ ...formData, selling_price: Number.parseFloat(e.target.value) || 0 })}
+                placeholder="Actual sale price"
+              />
+            </div>
+          </div>
+
+          {/* Shipping Profile and SKU */}
+          <div className="grid grid-cols-2 gap-4">
+            <div className="space-y-2">
+              <Label htmlFor="shipping_profile">Shipping Profile</Label>
+              <Select
+                value={formData.shipping_profile}
+                onValueChange={(value) => setFormData({ ...formData, shipping_profile: value })}
+              >
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {SHIPPING_PROFILES.map((profile) => (
+                    <SelectItem key={profile} value={profile}>
+                      {profile}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="sku">SKU (Optional)</Label>
+              <Input
+                id="sku"
+                value={formData.sku}
+                onChange={(e) => setFormData({ ...formData, sku: e.target.value })}
+                placeholder="Will be made unique automatically"
+              />
+              <p className="text-xs text-gray-500">Duplicate SKUs are allowed</p>
+            </div>
+          </div>
+
+          {/* Image Upload Sections */}
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            <ImageUploadSection imageNumber={1} />
+            <ImageUploadSection imageNumber={2} />
+          </div>
+
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
+              Cancel
+            </Button>
+            <Button type="submit" disabled={loading || uploadingImage !== null}>
+              {loading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+              Add Card
+            </Button>
+          </DialogFooter>
+        </form>
       </DialogContent>
     </Dialog>
   )
