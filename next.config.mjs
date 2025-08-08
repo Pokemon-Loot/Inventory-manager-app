@@ -6,22 +6,19 @@ const nextConfig = {
     ignoreBuildErrors: true,
   },
   images: {
-    domains: ['efmkxxwlthadfgaotqdk.supabase.co', 'images.pokemontcg.io'],
+    domains: ['images.pokemontcg.io', 'tcgplayer-cdn.tcgplayer.com', 'product-images.tcgplayer.com'],
     remotePatterns: [
       {
         protocol: 'https',
-        hostname: '*.supabase.co',
-        port: '',
-        pathname: '/storage/v1/object/public/**',
-      },
-      {
-        protocol: 'https',
-        hostname: 'images.pokemontcg.io',
-        port: '',
-        pathname: '/**',
+        hostname: '**',
       },
     ],
     unoptimized: true,
+  },
+  experimental: {
+    serverActions: {
+      allowedOrigins: ['localhost:3000', '*.vercel.app'],
+    },
   },
 }
 
